@@ -110,20 +110,3 @@ Hospital-Operations-Patient-Flow-Analysis/
 │
 └── README.md
 ```
-
----
-
-## Tools Used
-
-- SQL
-- MySQL
-- Excel
-- Power BI *(optional)*
-- Git
-- GitHub
-
----
-
-## Key Takeaways
-
-This project strengthened my SQL skills by working with a healthcare dataset focused on hospital operations. It also helped me practice answering business questions, identifying operational trends, and communicating insights that could support better decision making within a healthcare organization.
