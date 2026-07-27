@@ -1,11 +1,1257 @@
-## Data Cleaning
+-- =============================================================
+-- HOSPITAL OPERATIONS & PATIENT FLOW ANALYSIS
+-- SQL Dialect: MySQL 8.0+
+-- =============================================================
+-- Project Objective:
+-- Clean and analyze hospital patient-flow data to identify trends
+-- in admissions, wait times, satisfaction, demographics, and
+-- department performance.
+-- =============================================================
 
-- Standardized column names
-- Converted admission dates to date format
-- Standardized admission times
-- Renamed columns for clarity
-- Filled missing department referrals with "Not Referred"
-- Filled missing satisfaction scores with 0
-- Verified no duplicate records
+
+-- =============================================================
+-- 1. CREATE DATABASE
+-- =============================================================
+
+CREATE DATABASE IF NOT EXISTS hospital_operations;
+
+USE hospital_operations;
 
 
+-- =============================================================
+-- 2. CREATE RAW DATA TABLE
+-- =============================================================
+-- All columns are initially stored as text so the original CSV
+-- can be imported before cleaning and data-type conversion.
+
+DROP TABLE IF EXISTS patient_flow_raw;
+
+CREATE TABLE patient_flow_raw (
+    patient_id_raw VARCHAR(50),
+    admission_date_raw VARCHAR(30),
+    admission_time_raw VARCHAR(30),
+    patient_name_raw VARCHAR(150),
+    patient_gender_raw VARCHAR(30),
+    patient_age_raw VARCHAR(20),
+    patient_race_raw VARCHAR(100),
+    department_referral_raw VARCHAR(100),
+    admission_status_raw VARCHAR(50),
+    satisfaction_score_raw VARCHAR(20),
+    wait_time_raw VARCHAR(20)
+);
+
+
+-- =============================================================
+-- 3. IMPORT CSV DATA
+-- =============================================================
+-- Replace the file path below with the location of your CSV file.
+-- This section may be skipped if the MySQL Table Data Import
+-- Wizard is used.
+
+-- LOAD DATA LOCAL INFILE
+-- '/your/file/path/hospital_patient_flow_data.csv'
+-- INTO TABLE patient_flow_raw
+-- FIELDS TERMINATED BY ','
+-- ENCLOSED BY '"'
+-- LINES TERMINATED BY '\n'
+-- IGNORE 1 ROWS
+-- (
+--     patient_id_raw,
+--     admission_date_raw,
+--     admission_time_raw,
+--     patient_name_raw,
+--     patient_gender_raw,
+--     patient_age_raw,
+--     patient_race_raw,
+--     department_referral_raw,
+--     admission_status_raw,
+--     satisfaction_score_raw,
+--     wait_time_raw
+-- );
+
+
+-- =============================================================
+-- 4. INITIAL DATA-PROFILING CHECKS
+-- =============================================================
+
+-- Count total imported records.
+
+SELECT COUNT(*) AS total_raw_records
+FROM patient_flow_raw;
+
+
+-- Preview the raw dataset.
+
+SELECT *
+FROM patient_flow_raw
+LIMIT 10;
+
+
+-- Count missing values in important columns.
+
+SELECT
+    SUM(NULLIF(TRIM(patient_id_raw), '') IS NULL)
+        AS missing_patient_ids,
+
+    SUM(NULLIF(TRIM(admission_date_raw), '') IS NULL)
+        AS missing_admission_dates,
+
+    SUM(NULLIF(TRIM(admission_time_raw), '') IS NULL)
+        AS missing_admission_times,
+
+    SUM(NULLIF(TRIM(patient_gender_raw), '') IS NULL)
+        AS missing_gender_values,
+
+    SUM(NULLIF(TRIM(patient_age_raw), '') IS NULL)
+        AS missing_age_values,
+
+    SUM(NULLIF(TRIM(patient_race_raw), '') IS NULL)
+        AS missing_race_values,
+
+    SUM(NULLIF(TRIM(department_referral_raw), '') IS NULL)
+        AS missing_department_referrals,
+
+    SUM(NULLIF(TRIM(admission_status_raw), '') IS NULL)
+        AS missing_admission_statuses,
+
+    SUM(NULLIF(TRIM(satisfaction_score_raw), '') IS NULL)
+        AS missing_satisfaction_scores,
+
+    SUM(NULLIF(TRIM(wait_time_raw), '') IS NULL)
+        AS missing_wait_times
+
+FROM patient_flow_raw;
+
+
+-- Review gender values for spelling inconsistencies.
+
+SELECT
+    patient_gender_raw,
+    COUNT(*) AS record_count
+FROM patient_flow_raw
+GROUP BY patient_gender_raw
+ORDER BY record_count DESC;
+
+
+-- Review department values.
+
+SELECT
+    department_referral_raw,
+    COUNT(*) AS record_count
+FROM patient_flow_raw
+GROUP BY department_referral_raw
+ORDER BY record_count DESC;
+
+
+-- Review admission-status values.
+
+SELECT
+    admission_status_raw,
+    COUNT(*) AS record_count
+FROM patient_flow_raw
+GROUP BY admission_status_raw
+ORDER BY record_count DESC;
+
+
+-- Identify possible duplicate records.
+
+SELECT
+    patient_id_raw,
+    admission_date_raw,
+    admission_time_raw,
+    COUNT(*) AS duplicate_count
+FROM patient_flow_raw
+GROUP BY
+    patient_id_raw,
+    admission_date_raw,
+    admission_time_raw
+HAVING COUNT(*) > 1
+ORDER BY duplicate_count DESC;
+
+
+-- =============================================================
+-- 5. CREATE CLEANED DATA TABLE
+-- =============================================================
+-- Cleaning steps:
+-- 1. Remove duplicate records.
+-- 2. Trim unnecessary spaces.
+-- 3. Convert admission dates to DATE format.
+-- 4. Convert admission times to TIME format.
+-- 5. Correct misspelled gender values.
+-- 6. Replace missing department values with "Not Referred."
+-- 7. Preserve missing satisfaction scores as NULL.
+-- 8. Standardize admission-status values.
+-- 9. Convert numeric columns into numeric data types.
+-- 10. Remove patient names and anonymize patient IDs.
+
+
+DROP TABLE IF EXISTS patient_flow_clean;
+
+CREATE TABLE patient_flow_clean AS
+
+WITH duplicate_check AS (
+    SELECT
+        patient_id_raw,
+        admission_date_raw,
+        admission_time_raw,
+        patient_name_raw,
+        patient_gender_raw,
+        patient_age_raw,
+        patient_race_raw,
+        department_referral_raw,
+        admission_status_raw,
+        satisfaction_score_raw,
+        wait_time_raw,
+
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                TRIM(patient_id_raw),
+                TRIM(admission_date_raw),
+                TRIM(admission_time_raw)
+            ORDER BY patient_id_raw
+        ) AS duplicate_number
+
+    FROM patient_flow_raw
+),
+
+standardized_data AS (
+    SELECT
+        SHA2(TRIM(patient_id_raw), 256) AS patient_key,
+
+        STR_TO_DATE(
+            NULLIF(TRIM(admission_date_raw), ''),
+            '%d/%m/%Y'
+        ) AS admission_date,
+
+        STR_TO_DATE(
+            NULLIF(TRIM(admission_time_raw), ''),
+            '%h:%i:%s %p'
+        ) AS admission_time,
+
+        CASE
+            WHEN LOWER(TRIM(patient_gender_raw)) IN (
+                'female',
+                'femaleemale'
+            )
+                THEN 'Female'
+
+            WHEN LOWER(TRIM(patient_gender_raw)) = 'male'
+                THEN 'Male'
+
+            ELSE 'Unknown'
+        END AS patient_gender,
+
+        CAST(
+            NULLIF(TRIM(patient_age_raw), '')
+            AS UNSIGNED
+        ) AS patient_age,
+
+        CASE
+            WHEN NULLIF(TRIM(patient_race_raw), '') IS NULL
+                THEN 'Unknown'
+
+            ELSE TRIM(patient_race_raw)
+        END AS patient_race,
+
+        CASE
+            WHEN NULLIF(
+                TRIM(department_referral_raw),
+                ''
+            ) IS NULL
+                THEN 'Not Referred'
+
+            ELSE TRIM(department_referral_raw)
+        END AS department_referral,
+
+        CASE
+            WHEN LOWER(TRIM(admission_status_raw)) = 'admission'
+                THEN 'Admitted'
+
+            WHEN LOWER(TRIM(admission_status_raw))
+                = 'not admission'
+                THEN 'Not Admitted'
+
+            ELSE 'Unknown'
+        END AS admission_status,
+
+        CASE
+            WHEN NULLIF(
+                TRIM(satisfaction_score_raw),
+                ''
+            ) IS NULL
+                THEN NULL
+
+            ELSE CAST(
+                TRIM(satisfaction_score_raw)
+                AS DECIMAL(4,1)
+            )
+        END AS satisfaction_score,
+
+        CAST(
+            NULLIF(TRIM(wait_time_raw), '')
+            AS UNSIGNED
+        ) AS wait_time_minutes
+
+    FROM duplicate_check
+
+    WHERE duplicate_number = 1
+)
+
+SELECT
+    patient_key,
+    admission_date,
+    admission_time,
+    patient_gender,
+    patient_age,
+
+    CASE
+        WHEN patient_age BETWEEN 0 AND 17
+            THEN '0-17'
+
+        WHEN patient_age BETWEEN 18 AND 34
+            THEN '18-34'
+
+        WHEN patient_age BETWEEN 35 AND 49
+            THEN '35-49'
+
+        WHEN patient_age BETWEEN 50 AND 64
+            THEN '50-64'
+
+        WHEN patient_age >= 65
+            THEN '65+'
+
+        ELSE 'Unknown'
+    END AS age_group,
+
+    patient_race,
+    department_referral,
+    admission_status,
+    satisfaction_score,
+    wait_time_minutes,
+
+    CASE
+        WHEN wait_time_minutes < 20
+            THEN 'Under 20 Minutes'
+
+        WHEN wait_time_minutes BETWEEN 20 AND 39
+            THEN '20-39 Minutes'
+
+        WHEN wait_time_minutes BETWEEN 40 AND 59
+            THEN '40-59 Minutes'
+
+        WHEN wait_time_minutes >= 60
+            THEN '60+ Minutes'
+
+        ELSE 'Unknown'
+    END AS wait_time_group,
+
+    DAYNAME(admission_date)
+        AS admission_day,
+
+    DAYOFWEEK(admission_date)
+        AS admission_day_number,
+
+    HOUR(admission_time)
+        AS admission_hour,
+
+    CASE
+        WHEN HOUR(admission_time) BETWEEN 0 AND 5
+            THEN 'Overnight'
+
+        WHEN HOUR(admission_time) BETWEEN 6 AND 11
+            THEN 'Morning'
+
+        WHEN HOUR(admission_time) BETWEEN 12 AND 17
+            THEN 'Afternoon'
+
+        WHEN HOUR(admission_time) BETWEEN 18 AND 23
+            THEN 'Evening'
+
+        ELSE 'Unknown'
+    END AS admission_period
+
+FROM standardized_data
+
+WHERE
+    admission_date IS NOT NULL
+    AND admission_time IS NOT NULL
+    AND patient_age BETWEEN 0 AND 120
+    AND wait_time_minutes >= 0
+    AND (
+        satisfaction_score IS NULL
+        OR satisfaction_score BETWEEN 0 AND 10
+    );
+
+
+-- =============================================================
+-- 6. ADD INDEXES
+-- =============================================================
+
+ALTER TABLE patient_flow_clean
+ADD PRIMARY KEY (patient_key);
+
+CREATE INDEX idx_admission_date
+ON patient_flow_clean(admission_date);
+
+CREATE INDEX idx_department
+ON patient_flow_clean(department_referral);
+
+CREATE INDEX idx_admission_status
+ON patient_flow_clean(admission_status);
+
+CREATE INDEX idx_wait_time
+ON patient_flow_clean(wait_time_minutes);
+
+
+-- =============================================================
+-- 7. POST-CLEANING VALIDATION
+-- =============================================================
+
+-- Compare raw and cleaned row counts.
+
+SELECT
+    (SELECT COUNT(*)
+     FROM patient_flow_raw) AS raw_record_count,
+
+    (SELECT COUNT(*)
+     FROM patient_flow_clean) AS cleaned_record_count,
+
+    (SELECT COUNT(*)
+     FROM patient_flow_raw)
+
+    -
+
+    (SELECT COUNT(*)
+     FROM patient_flow_clean) AS removed_record_count;
+
+
+-- Confirm unique patient keys.
+
+SELECT
+    COUNT(*) AS total_records,
+    COUNT(DISTINCT patient_key) AS unique_patient_keys
+FROM patient_flow_clean;
+
+
+-- Confirm standardized gender values.
+
+SELECT
+    patient_gender,
+    COUNT(*) AS patient_count
+FROM patient_flow_clean
+GROUP BY patient_gender
+ORDER BY patient_count DESC;
+
+
+-- Validate numeric ranges.
+
+SELECT
+    MIN(patient_age) AS minimum_age,
+    MAX(patient_age) AS maximum_age,
+    MIN(wait_time_minutes) AS minimum_wait_time,
+    MAX(wait_time_minutes) AS maximum_wait_time,
+    MIN(satisfaction_score) AS minimum_satisfaction_score,
+    MAX(satisfaction_score) AS maximum_satisfaction_score
+FROM patient_flow_clean;
+
+
+-- Count remaining missing or unknown values.
+
+SELECT
+    SUM(patient_gender = 'Unknown')
+        AS unknown_gender_values,
+
+    SUM(patient_race = 'Unknown')
+        AS unknown_race_values,
+
+    SUM(department_referral = 'Not Referred')
+        AS patients_not_referred,
+
+    SUM(satisfaction_score IS NULL)
+        AS missing_satisfaction_scores
+
+FROM patient_flow_clean;
+
+
+-- =============================================================
+-- 8. OVERALL HOSPITAL KPI SUMMARY
+-- =============================================================
+
+SELECT
+    COUNT(*) AS total_patient_visits,
+
+    SUM(admission_status = 'Admitted')
+        AS admitted_patient_visits,
+
+    ROUND(
+        100.0
+        * SUM(admission_status = 'Admitted')
+        / COUNT(*),
+        2
+    ) AS admission_rate_percent,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        AVG(satisfaction_score),
+        2
+    ) AS average_satisfaction_score,
+
+    COUNT(satisfaction_score)
+        AS completed_satisfaction_surveys
+
+FROM patient_flow_clean;
+
+
+-- =============================================================
+-- 9. BUSINESS QUESTION:
+-- WHICH DEPARTMENTS HAVE THE LONGEST AVERAGE WAIT TIMES?
+-- =============================================================
+
+SELECT
+    department_referral,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes,
+
+    MIN(wait_time_minutes)
+        AS minimum_wait_time_minutes,
+
+    MAX(wait_time_minutes)
+        AS maximum_wait_time_minutes
+
+FROM patient_flow_clean
+
+GROUP BY department_referral
+
+ORDER BY average_wait_time_minutes DESC;
+
+
+-- Rank departments by average wait time.
+
+WITH department_wait_times AS (
+    SELECT
+        department_referral,
+        COUNT(*) AS patient_volume,
+        AVG(wait_time_minutes)
+            AS average_wait_time_minutes
+
+    FROM patient_flow_clean
+
+    GROUP BY department_referral
+)
+
+SELECT
+    department_referral,
+    patient_volume,
+
+    ROUND(
+        average_wait_time_minutes,
+        2
+    ) AS average_wait_time_minutes,
+
+    DENSE_RANK() OVER (
+        ORDER BY average_wait_time_minutes DESC
+    ) AS wait_time_rank
+
+FROM department_wait_times
+
+ORDER BY wait_time_rank;
+
+
+-- =============================================================
+-- 10. BUSINESS QUESTION:
+-- WHAT ARE THE BUSIEST ADMISSION DAYS?
+-- =============================================================
+
+SELECT
+    admission_day,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        100.0
+        * COUNT(*)
+        / SUM(COUNT(*)) OVER (),
+        2
+    ) AS percent_of_total_visits
+
+FROM patient_flow_clean
+
+GROUP BY
+    admission_day,
+    admission_day_number
+
+ORDER BY patient_volume DESC;
+
+
+-- =============================================================
+-- 11. BUSINESS QUESTION:
+-- WHAT ARE THE BUSIEST ADMISSION HOURS?
+-- =============================================================
+
+SELECT
+    admission_hour,
+
+    CONCAT(
+        LPAD(admission_hour, 2, '0'),
+        ':00'
+    ) AS admission_hour_label,
+
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes
+
+FROM patient_flow_clean
+
+GROUP BY admission_hour
+
+ORDER BY
+    patient_volume DESC,
+    admission_hour;
+
+
+-- Compare admissions by time of day.
+
+SELECT
+    admission_period,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        AVG(satisfaction_score),
+        2
+    ) AS average_satisfaction_score
+
+FROM patient_flow_clean
+
+GROUP BY admission_period
+
+ORDER BY patient_volume DESC;
+
+
+-- =============================================================
+-- 12. BUSINESS QUESTION:
+-- WHICH DEPARTMENTS RECEIVE THE HIGHEST SATISFACTION SCORES?
+-- =============================================================
+-- Missing satisfaction scores remain NULL and are not included
+-- in the average calculation.
+
+SELECT
+    department_referral,
+    COUNT(*) AS total_patient_visits,
+
+    COUNT(satisfaction_score)
+        AS completed_surveys,
+
+    ROUND(
+        100.0
+        * COUNT(satisfaction_score)
+        / COUNT(*),
+        2
+    ) AS survey_completion_rate_percent,
+
+    ROUND(
+        AVG(satisfaction_score),
+        2
+    ) AS average_satisfaction_score
+
+FROM patient_flow_clean
+
+GROUP BY department_referral
+
+HAVING COUNT(satisfaction_score) > 0
+
+ORDER BY
+    average_satisfaction_score DESC,
+    completed_surveys DESC;
+
+
+-- =============================================================
+-- 13. BUSINESS QUESTION:
+-- HOW DOES SATISFACTION CHANGE AS WAIT TIMES INCREASE?
+-- =============================================================
+
+WITH satisfaction_by_wait_group AS (
+    SELECT
+        wait_time_group,
+
+        CASE
+            WHEN wait_time_group = 'Under 20 Minutes'
+                THEN 1
+
+            WHEN wait_time_group = '20-39 Minutes'
+                THEN 2
+
+            WHEN wait_time_group = '40-59 Minutes'
+                THEN 3
+
+            WHEN wait_time_group = '60+ Minutes'
+                THEN 4
+
+            ELSE 5
+        END AS wait_group_order,
+
+        COUNT(*) AS total_patient_visits,
+
+        COUNT(satisfaction_score)
+            AS completed_surveys,
+
+        AVG(wait_time_minutes)
+            AS average_wait_time_minutes,
+
+        AVG(satisfaction_score)
+            AS average_satisfaction_score
+
+    FROM patient_flow_clean
+
+    GROUP BY wait_time_group
+)
+
+SELECT
+    wait_time_group,
+    total_patient_visits,
+    completed_surveys,
+
+    ROUND(
+        average_wait_time_minutes,
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        average_satisfaction_score,
+        2
+    ) AS average_satisfaction_score
+
+FROM satisfaction_by_wait_group
+
+ORDER BY wait_group_order;
+
+
+-- =============================================================
+-- 14. WAIT TIME AND SATISFACTION CORRELATION
+-- =============================================================
+-- A negative result indicates that satisfaction tends to decrease
+-- as patient wait times increase.
+
+WITH correlation_data AS (
+    SELECT
+        wait_time_minutes AS x,
+        satisfaction_score AS y
+
+    FROM patient_flow_clean
+
+    WHERE satisfaction_score IS NOT NULL
+),
+
+correlation_calculation AS (
+    SELECT
+        COUNT(*) AS record_count,
+        SUM(x) AS sum_x,
+        SUM(y) AS sum_y,
+        SUM(x * y) AS sum_xy,
+        SUM(x * x) AS sum_x_squared,
+        SUM(y * y) AS sum_y_squared
+
+    FROM correlation_data
+)
+
+SELECT
+    ROUND(
+        (
+            record_count * sum_xy
+            - sum_x * sum_y
+        )
+        /
+        NULLIF(
+            SQRT(
+                (
+                    record_count * sum_x_squared
+                    - POW(sum_x, 2)
+                )
+                *
+                (
+                    record_count * sum_y_squared
+                    - POW(sum_y, 2)
+                )
+            ),
+            0
+        ),
+        4
+    ) AS wait_time_satisfaction_correlation
+
+FROM correlation_calculation;
+
+
+-- =============================================================
+-- 15. BUSINESS QUESTION:
+-- WHICH DEMOGRAPHIC GROUPS HAVE THE HIGHEST PATIENT VOLUME?
+-- =============================================================
+
+-- Patient volume by age group.
+
+SELECT
+    age_group,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        100.0
+        * COUNT(*)
+        / SUM(COUNT(*)) OVER (),
+        2
+    ) AS percent_of_total_visits
+
+FROM patient_flow_clean
+
+GROUP BY age_group
+
+ORDER BY patient_volume DESC;
+
+
+-- Patient volume by gender.
+
+SELECT
+    patient_gender,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        100.0
+        * COUNT(*)
+        / SUM(COUNT(*)) OVER (),
+        2
+    ) AS percent_of_total_visits
+
+FROM patient_flow_clean
+
+GROUP BY patient_gender
+
+ORDER BY patient_volume DESC;
+
+
+-- Patient volume by race.
+
+SELECT
+    patient_race,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        100.0
+        * COUNT(*)
+        / SUM(COUNT(*)) OVER (),
+        2
+    ) AS percent_of_total_visits
+
+FROM patient_flow_clean
+
+GROUP BY patient_race
+
+ORDER BY patient_volume DESC;
+
+
+-- Combined demographic analysis.
+
+SELECT
+    age_group,
+    patient_gender,
+    patient_race,
+
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        AVG(satisfaction_score),
+        2
+    ) AS average_satisfaction_score
+
+FROM patient_flow_clean
+
+GROUP BY
+    age_group,
+    patient_gender,
+    patient_race
+
+ORDER BY patient_volume DESC
+
+LIMIT 20;
+
+
+-- =============================================================
+-- 16. BUSINESS QUESTION:
+-- HOW ARE PATIENT VISITS DISTRIBUTED ACROSS DEPARTMENTS?
+-- =============================================================
+
+SELECT
+    department_referral,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        100.0
+        * COUNT(*)
+        / SUM(COUNT(*)) OVER (),
+        2
+    ) AS percent_of_total_visits,
+
+    SUM(admission_status = 'Admitted')
+        AS admitted_patient_visits,
+
+    ROUND(
+        100.0
+        * SUM(admission_status = 'Admitted')
+        / COUNT(*),
+        2
+    ) AS department_admission_rate_percent
+
+FROM patient_flow_clean
+
+GROUP BY department_referral
+
+ORDER BY patient_volume DESC;
+
+
+-- =============================================================
+-- 17. ADMISSION STATUS DISTRIBUTION
+-- =============================================================
+
+SELECT
+    admission_status,
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        100.0
+        * COUNT(*)
+        / SUM(COUNT(*)) OVER (),
+        2
+    ) AS percent_of_total_visits
+
+FROM patient_flow_clean
+
+GROUP BY admission_status
+
+ORDER BY patient_volume DESC;
+
+
+-- =============================================================
+-- 18. DEPARTMENT PERFORMANCE COMPARISON
+-- =============================================================
+
+WITH department_performance AS (
+    SELECT
+        department_referral,
+
+        COUNT(*) AS patient_volume,
+
+        AVG(wait_time_minutes)
+            AS average_wait_time_minutes,
+
+        AVG(satisfaction_score)
+            AS average_satisfaction_score,
+
+        100.0
+        * SUM(admission_status = 'Admitted')
+        / COUNT(*) AS admission_rate_percent
+
+    FROM patient_flow_clean
+
+    GROUP BY department_referral
+)
+
+SELECT
+    department_referral,
+    patient_volume,
+
+    ROUND(
+        average_wait_time_minutes,
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        average_satisfaction_score,
+        2
+    ) AS average_satisfaction_score,
+
+    ROUND(
+        admission_rate_percent,
+        2
+    ) AS admission_rate_percent,
+
+    DENSE_RANK() OVER (
+        ORDER BY patient_volume DESC
+    ) AS patient_volume_rank,
+
+    DENSE_RANK() OVER (
+        ORDER BY average_wait_time_minutes ASC
+    ) AS wait_time_performance_rank,
+
+    DENSE_RANK() OVER (
+        ORDER BY average_satisfaction_score DESC
+    ) AS satisfaction_rank
+
+FROM department_performance
+
+ORDER BY patient_volume_rank;
+
+
+-- =============================================================
+-- 19. MONTHLY PATIENT-FLOW TRENDS
+-- =============================================================
+
+SELECT
+    DATE_FORMAT(
+        admission_date,
+        '%Y-%m'
+    ) AS admission_month,
+
+    COUNT(*) AS patient_volume,
+
+    SUM(admission_status = 'Admitted')
+        AS admitted_patient_visits,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        AVG(satisfaction_score),
+        2
+    ) AS average_satisfaction_score
+
+FROM patient_flow_clean
+
+GROUP BY DATE_FORMAT(
+    admission_date,
+    '%Y-%m'
+)
+
+ORDER BY admission_month;
+
+
+-- =============================================================
+-- 20. MONTH-OVER-MONTH PATIENT-VOLUME CHANGE
+-- =============================================================
+
+WITH monthly_patient_volume AS (
+    SELECT
+        DATE_FORMAT(
+            admission_date,
+            '%Y-%m'
+        ) AS admission_month,
+
+        COUNT(*) AS patient_volume
+
+    FROM patient_flow_clean
+
+    GROUP BY DATE_FORMAT(
+        admission_date,
+        '%Y-%m'
+    )
+),
+
+monthly_comparison AS (
+    SELECT
+        admission_month,
+        patient_volume,
+
+        LAG(patient_volume) OVER (
+            ORDER BY admission_month
+        ) AS previous_month_volume
+
+    FROM monthly_patient_volume
+)
+
+SELECT
+    admission_month,
+    patient_volume,
+    previous_month_volume,
+
+    patient_volume
+    - previous_month_volume
+        AS volume_change,
+
+    ROUND(
+        100.0
+        * (
+            patient_volume
+            - previous_month_volume
+        )
+        / NULLIF(previous_month_volume, 0),
+        2
+    ) AS month_over_month_change_percent
+
+FROM monthly_comparison
+
+ORDER BY admission_month;
+
+
+-- =============================================================
+-- 21. IDENTIFY HIGH-VOLUME, HIGH-WAIT DEPARTMENTS
+-- =============================================================
+-- Departments with above-average volume and above-average wait
+-- times may require additional staffing or workflow improvements.
+
+WITH department_metrics AS (
+    SELECT
+        department_referral,
+
+        COUNT(*) AS patient_volume,
+
+        AVG(wait_time_minutes)
+            AS average_wait_time_minutes,
+
+        AVG(satisfaction_score)
+            AS average_satisfaction_score
+
+    FROM patient_flow_clean
+
+    GROUP BY department_referral
+),
+
+department_benchmarks AS (
+    SELECT
+        AVG(patient_volume)
+            AS average_department_volume,
+
+        AVG(average_wait_time_minutes)
+            AS average_department_wait_time
+
+    FROM department_metrics
+)
+
+SELECT
+    department_metrics.department_referral,
+    department_metrics.patient_volume,
+
+    ROUND(
+        department_metrics.average_wait_time_minutes,
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        department_metrics.average_satisfaction_score,
+        2
+    ) AS average_satisfaction_score,
+
+    CASE
+        WHEN
+            department_metrics.patient_volume
+                > department_benchmarks.average_department_volume
+
+            AND
+
+            department_metrics.average_wait_time_minutes
+                > department_benchmarks.average_department_wait_time
+
+            THEN 'High Priority'
+
+        WHEN
+            department_metrics.patient_volume
+                > department_benchmarks.average_department_volume
+
+            THEN 'Monitor Patient Volume'
+
+        WHEN
+            department_metrics.average_wait_time_minutes
+                > department_benchmarks.average_department_wait_time
+
+            THEN 'Monitor Wait Time'
+
+        ELSE 'Standard Priority'
+    END AS operational_priority
+
+FROM department_metrics
+
+CROSS JOIN department_benchmarks
+
+ORDER BY
+    CASE
+        WHEN
+            department_metrics.patient_volume
+                > department_benchmarks.average_department_volume
+
+            AND
+
+            department_metrics.average_wait_time_minutes
+                > department_benchmarks.average_department_wait_time
+
+            THEN 1
+
+        WHEN
+            department_metrics.patient_volume
+                > department_benchmarks.average_department_volume
+
+            THEN 2
+
+        WHEN
+            department_metrics.average_wait_time_minutes
+                > department_benchmarks.average_department_wait_time
+
+            THEN 3
+
+        ELSE 4
+    END,
+
+    department_metrics.patient_volume DESC;
+
+
+-- =============================================================
+-- 22. CREATE REUSABLE DEPARTMENT KPI VIEW
+-- =============================================================
+
+CREATE OR REPLACE VIEW department_kpi_summary AS
+
+SELECT
+    department_referral,
+
+    COUNT(*) AS patient_volume,
+
+    ROUND(
+        AVG(wait_time_minutes),
+        2
+    ) AS average_wait_time_minutes,
+
+    ROUND(
+        AVG(satisfaction_score),
+        2
+    ) AS average_satisfaction_score,
+
+    COUNT(satisfaction_score)
+        AS completed_satisfaction_surveys,
+
+    ROUND(
+        100.0
+        * SUM(admission_status = 'Admitted')
+        / COUNT(*),
+        2
+    ) AS admission_rate_percent
+
+FROM patient_flow_clean
+
+GROUP BY department_referral;
+
+
+-- Review the KPI summary view.
+
+SELECT *
+FROM department_kpi_summary
+ORDER BY patient_volume DESC;
+
+
+-- =============================================================
+-- END OF HOSPITAL OPERATIONS & PATIENT FLOW ANALYSIS
+-- =============================================================
