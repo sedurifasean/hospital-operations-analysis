@@ -59,8 +59,6 @@ Using SQL, I performed analyses including:
 - Evaluated how wait times impact patient satisfaction.
 - Identified demographic trends in hospital admissions.
 
-> *Update this section with your actual findings after completing the analysis.*
-
 ---
 
 ## Business Recommendations
