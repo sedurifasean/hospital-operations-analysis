@@ -1,1 +1,11 @@
+## Data Cleaning
+
+- Standardized column names
+- Converted admission dates to date format
+- Standardized admission times
+- Renamed columns for clarity
+- Filled missing department referrals with "Not Referred"
+- Filled missing satisfaction scores with 0
+- Verified no duplicate records
+
 
