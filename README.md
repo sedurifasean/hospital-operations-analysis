@@ -2,7 +2,7 @@
 
 ## Overview
 
-In this project, I used SQL to analyze healthcare patient flow data and explore trends in admissions, wait times, patient satisfaction, and department performance. The goal was to answer practical business questions and uncover insights that could support better operational decisions.
+In this project, I used SQL to analyze hospital patient flow data and evaluate key operational metrics, including admissions, wait times, patient satisfaction, and department performance. The project demonstrates how SQL can be used to clean healthcare data, answer business questions, and generate insights that support operational efficiency, staffing decisions, and resource planning.
 
 ---
 
