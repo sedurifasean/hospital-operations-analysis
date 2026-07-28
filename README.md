@@ -23,6 +23,23 @@ The dataset includes patient-level hospital operations data, including:
 - Patient Satisfaction Score
 
 ---
+## Data Cleaning
+
+Before conducting the analysis, the dataset was cleaned and standardized to improve data quality and prepare it for SQL analysis.
+
+### Cleaning Steps
+
+- Reviewed the dataset for missing values, duplicate records, and inconsistent formatting.
+- Removed personally identifiable information (PII) by anonymizing patient identifiers.
+- Corrected inconsistent gender values.
+- Standardized admission date and time formats.
+- Converted numeric fields to appropriate data types.
+- Standardized categorical values.
+- Removed extra spaces and inconsistent text formatting.
+- Preserved missing patient satisfaction scores as `NULL`.
+- Validated the cleaned dataset and confirmed no duplicate records.
+
+---
 
 ## Business Questions
 
