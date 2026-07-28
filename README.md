@@ -111,19 +111,17 @@ Based on the analysis, potential recommendations include:
 Hospital-Operations-Patient-Flow-Analysis/
 │
 ├── Data/
-│   └── healthcare_patient_flow.csv
+│   └── original.csv
+│   └── clean.csv
+│
+├── Docs/
+│   └── exploratory_analysis.md
+│   └── business_questions.md
 │
 ├── SQL/
 │   ├── data_cleaning.sql
 │   ├── exploratory_analysis.sql
 │   ├── business_questions.sql
-│
-├── Dashboard/
-│   ├── dashboard.png
-│   └── powerbi_dashboard.pbix
-│
-├── Images/
-│   └── dashboard_preview.png
-│
+│ 
 └── README.md
 ```
